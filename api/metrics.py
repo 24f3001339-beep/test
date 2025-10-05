@@ -34,7 +34,6 @@ def get_metrics(df, region, threshold):
 def handler(request):
     """Vercel serverless function entry point with full CORS support"""
     
-    # MODIFIED: Added Content-Type header explicitly for robustness
     cors_headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -56,8 +55,17 @@ def handler(request):
         return body, 500, cors_headers
 
     try:
-        # Vercel handles request.json for parsing the JSON body
-        body_data = request.json
+        # --- FIX: Robust Body Parsing ---
+        # 1. Try Vercel's preferred automatic parsing
+        if hasattr(request, 'json') and request.json is not None:
+            body_data = request.json
+        # 2. Fallback to manually loading the raw body
+        elif hasattr(request, 'body') and request.body:
+            body_data = json.loads(request.body)
+        else:
+            raise ValueError("Request body is empty or invalid.")
+        # --- END FIX ---
+            
         regions = body_data.get("regions", [])
         threshold = body_data.get("threshold_ms", 180)
 
@@ -67,5 +75,5 @@ def handler(request):
         return json.dumps(results), 200, cors_headers
         
     except Exception as e:
-        body = json.dumps({"error": str(e)})
+        body = json.dumps({"error": "Internal Server Error during processing: " + str(e)})
         return body, 500, cors_headers
