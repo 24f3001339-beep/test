@@ -1,3 +1,5 @@
 # requirements.txt
-pandas
-numpy
+fastapi
+pydantic
+uvicorn
+python-multipart  # Good practice for FastAPI, though not strictly needed here
