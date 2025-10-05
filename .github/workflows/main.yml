@@ -1,0 +1,17 @@
+name: Email Step Test
+
+on: [push, workflow_dispatch]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # This step name contains your specified email address
+      - name: 24f3001339@ds.study.iitm.ac.in
+        run: echo "The action is running successfully!"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Print a message
+        run: echo "This is another step."
