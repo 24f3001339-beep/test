@@ -1,9 +1,20 @@
 import json
 import pandas as pd
 from pathlib import Path
+import os
+import sys # Added for path debugging
 
 # --- Load data globally for performance ---
-DATA_PATH = Path(__file__).parent.parent / "data" / "q-vercel-latency.json"
+# NOTE: Vercel environment path handling can be tricky.
+# We modify the path lookup to be more robust, searching relative to the executing file.
+
+# Dynamically set the base directory, which is usually the 'api' directory on Vercel
+# Using os.path.dirname(__file__) is often more reliable than Path(__file__).parent
+BASE_DIR = Path(os.path.dirname(__file__))
+
+# Look for the data file two directories up: BASE_DIR/../data/q-vercel-latency.json
+DATA_PATH = BASE_DIR.parent / "data" / "q-vercel-latency.json"
+
 GLOBAL_ERROR = None
 
 try:
@@ -12,7 +23,7 @@ try:
     df.rename(columns={'latency_ms': 'latency', 'uptime_pct': 'uptime'}, inplace=True)
 except FileNotFoundError:
     df = pd.DataFrame()
-    GLOBAL_ERROR = "Data file not found at expected path."
+    GLOBAL_ERROR = f"Data file not found at: {DATA_PATH.resolve()}" # Log the final resolved path
 except Exception as e:
     # Catching general errors during data reading (e.g., pandas parsing error)
     df = pd.DataFrame()
@@ -58,17 +69,21 @@ def handler(request):
 
     # CHECK FOR GLOBAL DATA LOAD FAILURE
     if df.empty:
-        # Return the specific global error message if available, otherwise generic error.
-        error_msg = GLOBAL_ERROR if GLOBAL_ERROR else "Data could not be loaded on the server."
+        # Return the specific global error message captured during startup.
+        error_msg = GLOBAL_ERROR if GLOBAL_ERROR else "Data could not be loaded on the server (unknown reason)."
         body = json.dumps({"error": error_msg})
         return body, 500, cors_headers
 
     try:
-        # --- Robust Body Parsing (UNMODIFIED) ---
+        # --- Robust Body Parsing ---
         if hasattr(request, 'json') and request.json is not None:
             body_data = request.json
         elif hasattr(request, 'body') and request.body:
-            body_data = json.loads(request.body)
+            # Decode the request body bytes/string if it exists
+            if isinstance(request.body, bytes):
+                 body_data = json.loads(request.body.decode('utf-8'))
+            else:
+                 body_data = json.loads(request.body)
         else:
             raise ValueError("Request body is empty or invalid.")
         # --- END Robust Body Parsing ---
