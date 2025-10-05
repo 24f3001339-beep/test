@@ -18,21 +18,20 @@ def handler(request):
     try:
         import pandas as pd  # lazy import
 
-        # Lazy-load JSON
+        # Load JSON dynamically
         base_dir = Path(__file__).parent
         data_file = base_dir.parent / "data" / "q-vercel-latency.json"
-
-        try:
-            df = pd.read_json(data_file)
-            df.columns = df.columns.str.lower()
-            df.rename(columns={'latency_ms': 'latency', 'uptime_pct': 'uptime'}, inplace=True)
-        except Exception:
-            # fallback dummy data if JSON missing or invalid
+        if not data_file.exists():
+            # fallback dummy data
             df = pd.DataFrame({
                 "region": ["us-east-1", "eu-west-1"],
                 "latency": [100, 120],
                 "uptime": [99.9, 99.5]
             })
+        else:
+            df = pd.read_json(data_file)
+            df.columns = df.columns.str.lower()
+            df.rename(columns={'latency_ms': 'latency', 'uptime_pct': 'uptime'}, inplace=True)
 
         # Parse request body
         body_data = getattr(request, 'json', None) or getattr(request, 'body', None)
@@ -64,4 +63,5 @@ def handler(request):
         return json.dumps(results), 200, cors_headers
 
     except Exception as e:
+        # Never let the function crash
         return json.dumps({"error": f"Runtime error: {str(e)}"}), 500, cors_headers
