@@ -6,27 +6,22 @@ from pathlib import Path
 
 # --- Configuration ---
 # Vercel's deployment environment is read-only, so we load the data once globally.
-# NOTE: Ensure your file is named 'q-vercel-latency.json' and is in a 'data' folder
-# adjacent to the 'api' folder (i.e., 'data/q-vercel-latency.json').
 DATA_PATH = Path(__file__).parent.parent / "data" / "q-vercel-latency.json"
 
 try:
-    # 💥 MODIFIED: Using pd.read_json to correctly load the JSON file.
+    # MODIFIED: Using pd.read_json to correctly load the JSON file.
     df = pd.read_json(DATA_PATH)
     
-    # Ensure columns are properly named/cased if different from the sample data
     # Standardize column names for ease of use
     df.columns = df.columns.str.lower()
     df.rename(columns={'latency_ms': 'latency', 'uptime_pct': 'uptime'}, inplace=True)
 except FileNotFoundError:
-    # Fallback for environments where the data might be loaded differently
     df = pd.DataFrame()
 
 
 def get_metrics(df, region, threshold):
     """Calculates all required metrics for a single region."""
     
-    # 1. Filter data for the current region
     region_data = df[df['region'] == region]
     
     if region_data.empty:
@@ -37,13 +32,13 @@ def get_metrics(df, region, threshold):
             "breaches": 0,
         }
 
-    # 2. Calculate Required Metrics
+    # Calculate Required Metrics
     avg_latency = region_data['latency'].mean()
-    p95_latency = region_data['latency'].quantile(0.95, interpolation='lower') # Use 'lower' for a conservative 95th percentile
+    p95_latency = region_data['latency'].quantile(0.95, interpolation='lower')
     avg_uptime = region_data['uptime'].mean()
     breaches = (region_data['latency'] > threshold).sum()
 
-    # 3. Format and Return
+    # Format and Return
     return {
         "avg_latency": round(avg_latency, 2),
         "p95_latency": int(p95_latency),
@@ -66,11 +61,10 @@ def core_handler(request):
     if request.method == 'OPTIONS':
         return (204, headers, None)
     
-    # Check for correct method and data frame
     if request.method != 'POST':
         return (405, headers, "Method Not Allowed")
         
-    # Check if the data loaded correctly (prevents 500 error if data is missing)
+    # Check if the data loaded correctly
     if df.empty:
          return (500, headers, json.dumps({"error": "Data could not be loaded on the server."}))
 
@@ -95,24 +89,12 @@ def core_handler(request):
         # General error handling
         return (500, headers, json.dumps({"error": str(e)}))
 
-# Vercel requires the handler function to be present. 
-# We use a wrapper class for robust compatibility, especially when testing locally.
+# Vercel entry point requires the handler function to be present. 
+# We use a wrapper class for robust compatibility.
 class handler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        # Read the content length and body
-        content_length = int(self.headers['Content-Length'])
-        body = self.rfile.read(content_length).decode('utf-8')
-        
-        # Create a mock request object for the custom core_handler function
-        mock_request = type('Request', (object,), {
-            'method': 'POST',
-            'body': body
-        })
-
-        # Call the core logic handler
-        status, headers, response_body = core_handler(mock_request)
-        
-        # Write response
+    
+    # MODIFIED: Helper function to write status and headers consistently for CORS
+    def _send_response(self, status, headers, response_body):
         self.send_response(status)
         for key, value in headers.items():
             self.send_header(key, value)
@@ -121,13 +103,24 @@ class handler(BaseHTTPRequestHandler):
         if response_body:
             self.wfile.write(response_body.encode('utf-8'))
             
-    # Handle OPTIONS preflight requests for CORS
+    def do_POST(self):
+        content_length = int(self.headers['Content-Length'])
+        body = self.rfile.read(content_length).decode('utf-8')
+        
+        mock_request = type('Request', (object,), {
+            'method': 'POST',
+            'body': body
+        })
+
+        status, headers, response_body = core_handler(mock_request)
+        
+        # Write response using the helper
+        self._send_response(status, headers, response_body)
+            
     def do_OPTIONS(self):
-        # Create a mock request object for the custom core_handler function
         mock_request = type('Request', (object,), {'method': 'OPTIONS', 'body': None})
         
         status, headers, _ = core_handler(mock_request)
-        self.send_response(status)
-        for key, value in headers.items():
-            self.send_header(key, value)
-        self.end_headers()
+        
+        # Write response using the helper (no body for OPTIONS)
+        self._send_response(status, headers, None)
