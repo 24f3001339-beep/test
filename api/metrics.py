@@ -4,6 +4,7 @@ from pathlib import Path
 
 # --- Load data globally for performance ---
 DATA_PATH = Path(__file__).parent.parent / "data" / "q-vercel-latency.json"
+GLOBAL_ERROR = None
 
 try:
     df = pd.read_json(DATA_PATH)
@@ -11,6 +12,11 @@ try:
     df.rename(columns={'latency_ms': 'latency', 'uptime_pct': 'uptime'}, inplace=True)
 except FileNotFoundError:
     df = pd.DataFrame()
+    GLOBAL_ERROR = "Data file not found at expected path."
+except Exception as e:
+    # Catching general errors during data reading (e.g., pandas parsing error)
+    df = pd.DataFrame()
+    GLOBAL_ERROR = f"Data parsing error: {str(e)}"
 
 
 def get_metrics(df, region, threshold):
@@ -50,21 +56,22 @@ def handler(request):
         body = json.dumps({"error": "Method Not Allowed"})
         return body, 405, cors_headers
 
+    # CHECK FOR GLOBAL DATA LOAD FAILURE
     if df.empty:
-        body = json.dumps({"error": "Data could not be loaded on the server."})
+        # Return the specific global error message if available, otherwise generic error.
+        error_msg = GLOBAL_ERROR if GLOBAL_ERROR else "Data could not be loaded on the server."
+        body = json.dumps({"error": error_msg})
         return body, 500, cors_headers
 
     try:
-        # --- FIX: Robust Body Parsing ---
-        # 1. Try Vercel's preferred automatic parsing
+        # --- Robust Body Parsing (UNMODIFIED) ---
         if hasattr(request, 'json') and request.json is not None:
             body_data = request.json
-        # 2. Fallback to manually loading the raw body
         elif hasattr(request, 'body') and request.body:
             body_data = json.loads(request.body)
         else:
             raise ValueError("Request body is empty or invalid.")
-        # --- END FIX ---
+        # --- END Robust Body Parsing ---
             
         regions = body_data.get("regions", [])
         threshold = body_data.get("threshold_ms", 180)
@@ -75,5 +82,6 @@ def handler(request):
         return json.dumps(results), 200, cors_headers
         
     except Exception as e:
-        body = json.dumps({"error": "Internal Server Error during processing: " + str(e)})
+        # This catch block is for errors during runtime (e.g., bad input parsing)
+        body = json.dumps({"error": "Runtime Error during processing: " + str(e)})
         return body, 500, cors_headers
