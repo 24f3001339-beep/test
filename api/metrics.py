@@ -9,10 +9,9 @@ import sys # Added for path debugging
 # We modify the path lookup to be more robust, searching relative to the executing file.
 
 # Dynamically set the base directory, which is usually the 'api' directory on Vercel
-# Using os.path.dirname(__file__) is often more reliable than Path(__file__).parent
 BASE_DIR = Path(os.path.dirname(__file__))
 
-# Look for the data file two directories up: BASE_DIR/../data/q-vercel-latency.json
+# Standard path: api/../data/q-vercel-latency.json
 DATA_PATH = BASE_DIR.parent / "data" / "q-vercel-latency.json"
 
 GLOBAL_ERROR = None
@@ -22,12 +21,27 @@ try:
     df.columns = df.columns.str.lower()
     df.rename(columns={'latency_ms': 'latency', 'uptime_pct': 'uptime'}, inplace=True)
 except FileNotFoundError:
-    df = pd.DataFrame()
-    GLOBAL_ERROR = f"Data file not found at: {DATA_PATH.resolve()}" # Log the final resolved path
+    
+    # 💥 CRITICAL FIX: Try Vercel's relative path fallback 💥
+    # On some deployments, Vercel places data directly in the root of the function bundle.
+    FALLBACK_PATH = Path(os.path.join(os.getcwd(), 'data', 'q-vercel-latency.json'))
+    
+    try:
+        df = pd.read_json(FALLBACK_PATH)
+        df.columns = df.columns.str.lower()
+        df.rename(columns={'latency_ms': 'latency', 'uptime_pct': 'uptime'}, inplace=True)
+    except FileNotFoundError:
+        df = pd.DataFrame()
+        # 💥 FIX: Removed .resolve() which was causing errors 💥
+        GLOBAL_ERROR = f"Data file not found after two path checks."
+    except Exception as e:
+        df = pd.DataFrame()
+        GLOBAL_ERROR = f"Data parsing error on fallback path: {str(e)}"
+
 except Exception as e:
     # Catching general errors during data reading (e.g., pandas parsing error)
     df = pd.DataFrame()
-    GLOBAL_ERROR = f"Data parsing error: {str(e)}"
+    GLOBAL_ERROR = f"Data parsing error on standard path: {str(e)}"
 
 
 def get_metrics(df, region, threshold):
@@ -71,7 +85,7 @@ def handler(request):
     if df.empty:
         # Return the specific global error message captured during startup.
         error_msg = GLOBAL_ERROR if GLOBAL_ERROR else "Data could not be loaded on the server (unknown reason)."
-        body = json.dumps({"error": error_msg})
+        body = json.dumps({"error": "Initialization Error: " + error_msg})
         return body, 500, cors_headers
 
     try:
