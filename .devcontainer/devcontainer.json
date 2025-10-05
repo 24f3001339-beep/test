@@ -1,0 +1,28 @@
+{
+    // Required: Sets the display name for the Codespace
+    "name": "ga2-778bb1",
+
+    // Required: Use a standard base image or definition
+    // You can use a standard Python definition as a base
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu", 
+
+    // Required: Use the ghcr.io/devcontainers/features/python:1 feature for Python setup
+    "features": {
+        "ghcr.io/devcontainers/features/python:1": {
+            "version": "3.11" // Specify a stable Python version
+        }
+    },
+    
+    // Required: Install VS Code extensions
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "astral-sh.uv",
+                "ms-python.python"
+            ]
+        }
+    },
+
+    // Required: Run the dependency install command after the container is created
+    "postCreateCommand": "uv pip install fastapi"
+}
