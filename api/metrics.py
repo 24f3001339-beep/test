@@ -1,9 +1,8 @@
 import json
 import pandas as pd
-from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-# --- Configuration ---
+# --- Load data globally for performance ---
 DATA_PATH = Path(__file__).parent.parent / "data" / "q-vercel-latency.json"
 
 try:
@@ -32,57 +31,31 @@ def get_metrics(df, region, threshold):
     }
 
 
-def core_handler(request):
-    """Core logic with CORS always applied"""
+def handler(request):
+    """Vercel serverless function entry point with full CORS support"""
     cors_headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
     }
 
-    # Handle preflight
-    if request.method == 'OPTIONS':
-        return 204, cors_headers, None
+    # Handle preflight OPTIONS request
+    if request.method == "OPTIONS":
+        return ("", 204, cors_headers)
 
-    if request.method != 'POST':
-        return 405, cors_headers, json.dumps({"error": "Method Not Allowed"})
+    if request.method != "POST":
+        return (json.dumps({"error": "Method Not Allowed"}), 405, cors_headers)
 
     if df.empty:
-        return 500, cors_headers, json.dumps({"error": "Data could not be loaded on the server."})
+        return (json.dumps({"error": "Data could not be loaded on the server."}), 500, cors_headers)
 
     try:
-        body = json.loads(request.body)
-        regions_list = body.get("regions", [])
-        threshold_ms = body.get("threshold_ms", 180)
+        body = request.json  # Vercel automatically parses JSON if Content-Type is application/json
+        regions = body.get("regions", [])
+        threshold = body.get("threshold_ms", 180)
 
-        results = {region: get_metrics(df, region, threshold_ms) for region in regions_list}
-        return 200, cors_headers, json.dumps(results)
+        results = {region: get_metrics(df, region, threshold) for region in regions}
 
-    except json.JSONDecodeError:
-        return 400, cors_headers, json.dumps({"error": "Invalid JSON body"})
+        return (json.dumps(results), 200, cors_headers)
     except Exception as e:
-        return 500, cors_headers, json.dumps({"error": str(e)})
-
-
-class handler(BaseHTTPRequestHandler):
-    """Wrapper to handle HTTP requests"""
-
-    def _send_response(self, status, headers, response_body):
-        self.send_response(status)
-        for key, value in headers.items():
-            self.send_header(key, value)
-        self.end_headers()
-        if response_body:
-            self.wfile.write(response_body.encode('utf-8'))
-
-    def do_POST(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length).decode('utf-8') if content_length else ''
-        mock_request = type('Request', (object,), {'method': 'POST', 'body': body})
-        status, headers, response_body = core_handler(mock_request)
-        self._send_response(status, headers, response_body)
-
-    def do_OPTIONS(self):
-        mock_request = type('Request', (object,), {'method': 'OPTIONS', 'body': None})
-        status, headers, _ = core_handler(mock_request)
-        self._send_response(status, headers, None)
+        return (json.dumps({"error": str(e)}), 500, cors_headers)
