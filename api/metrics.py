@@ -2,46 +2,32 @@ import json
 import pandas as pd
 from pathlib import Path
 import os
-import sys # Added for path debugging
 
-# --- Load data globally for performance ---
-# NOTE: Vercel environment path handling can be tricky.
-# We modify the path lookup to be more robust, searching relative to the executing file.
-
-# Dynamically set the base directory, which is usually the 'api' directory on Vercel
-BASE_DIR = Path(os.path.dirname(__file__))
-
-# Standard path: api/../data/q-vercel-latency.json
+# --- Load data globally ---
+BASE_DIR = Path(__file__).parent
 DATA_PATH = BASE_DIR.parent / "data" / "q-vercel-latency.json"
 
 GLOBAL_ERROR = None
+df = pd.DataFrame()
 
+# Try primary path
 try:
     df = pd.read_json(DATA_PATH)
     df.columns = df.columns.str.lower()
     df.rename(columns={'latency_ms': 'latency', 'uptime_pct': 'uptime'}, inplace=True)
 except FileNotFoundError:
-    
-    # 💥 CRITICAL FIX: Try Vercel's relative path fallback 💥
-    # On some deployments, Vercel places data directly in the root of the function bundle.
-    FALLBACK_PATH = Path(os.path.join(os.getcwd(), 'data', 'q-vercel-latency.json'))
-    
+    # Try fallback path in case Vercel bundled differently
+    fallback_path = BASE_DIR / "data" / "q-vercel-latency.json"
     try:
-        df = pd.read_json(FALLBACK_PATH)
+        df = pd.read_json(fallback_path)
         df.columns = df.columns.str.lower()
         df.rename(columns={'latency_ms': 'latency', 'uptime_pct': 'uptime'}, inplace=True)
-    except FileNotFoundError:
-        df = pd.DataFrame()
-        # 💥 FIX: Removed .resolve() which was causing errors 💥
-        GLOBAL_ERROR = f"Data file not found after two path checks."
     except Exception as e:
         df = pd.DataFrame()
-        GLOBAL_ERROR = f"Data parsing error on fallback path: {str(e)}"
-
+        GLOBAL_ERROR = f"Data file not found or could not be parsed: {str(e)}"
 except Exception as e:
-    # Catching general errors during data reading (e.g., pandas parsing error)
     df = pd.DataFrame()
-    GLOBAL_ERROR = f"Data parsing error on standard path: {str(e)}"
+    GLOBAL_ERROR = f"Data parsing error: {str(e)}"
 
 
 def get_metrics(df, region, threshold):
@@ -63,54 +49,44 @@ def get_metrics(df, region, threshold):
 
 
 def handler(request):
-    """Vercel serverless function entry point with full CORS support"""
-    
+    """Vercel serverless function with guaranteed CORS and JSON response"""
     cors_headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
-        "Content-Type": "application/json" 
+        "Content-Type": "application/json"
     }
 
-    # Handle preflight OPTIONS request
+    # OPTIONS preflight
     if request.method == "OPTIONS":
-        # The body is empty for a 204 response
         return "", 204, cors_headers
 
     if request.method != "POST":
-        body = json.dumps({"error": "Method Not Allowed"})
-        return body, 405, cors_headers
+        return json.dumps({"error": "Method Not Allowed"}), 405, cors_headers
 
-    # CHECK FOR GLOBAL DATA LOAD FAILURE
     if df.empty:
-        # Return the specific global error message captured during startup.
-        error_msg = GLOBAL_ERROR if GLOBAL_ERROR else "Data could not be loaded on the server (unknown reason)."
-        body = json.dumps({"error": "Initialization Error: " + error_msg})
-        return body, 500, cors_headers
+        error_msg = GLOBAL_ERROR or "Data not loaded on server."
+        return json.dumps({"error": f"Initialization Error: {error_msg}"}), 500, cors_headers
 
     try:
-        # --- Robust Body Parsing ---
-        if hasattr(request, 'json') and request.json is not None:
-            body_data = request.json
-        elif hasattr(request, 'body') and request.body:
-            # Decode the request body bytes/string if it exists
-            if isinstance(request.body, bytes):
-                 body_data = json.loads(request.body.decode('utf-8'))
+        # Parse request body
+        body_data = getattr(request, 'json', None)
+        if not body_data:
+            body_raw = getattr(request, 'body', None)
+            if body_raw:
+                if isinstance(body_raw, bytes):
+                    body_data = json.loads(body_raw.decode('utf-8'))
+                else:
+                    body_data = json.loads(body_raw)
             else:
-                 body_data = json.loads(request.body)
-        else:
-            raise ValueError("Request body is empty or invalid.")
-        # --- END Robust Body Parsing ---
-            
+                return json.dumps({"error": "Empty request body"}), 400, cors_headers
+
         regions = body_data.get("regions", [])
         threshold = body_data.get("threshold_ms", 180)
 
         results = {region: get_metrics(df, region, threshold) for region in regions}
-        
-        # FINAL RESPONSE: Return (body, status_code, headers)
+
         return json.dumps(results), 200, cors_headers
-        
+
     except Exception as e:
-        # This catch block is for errors during runtime (e.g., bad input parsing)
-        body = json.dumps({"error": "Runtime Error during processing: " + str(e)})
-        return body, 500, cors_headers
+        return json.dumps({"error": f"Runtime Error: {str(e)}"}), 500, cors_headers
