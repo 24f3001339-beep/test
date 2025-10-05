@@ -1,33 +1,44 @@
 import json
-import pandas as pd
 from pathlib import Path
 import os
 
-# --- Load data globally ---
-BASE_DIR = Path(__file__).parent
-DATA_PATH = BASE_DIR.parent / "data" / "q-vercel-latency.json"
-
+# Global placeholders
+df = None
 GLOBAL_ERROR = None
-df = pd.DataFrame()
 
-# Try primary path
-try:
-    df = pd.read_json(DATA_PATH)
-    df.columns = df.columns.str.lower()
-    df.rename(columns={'latency_ms': 'latency', 'uptime_pct': 'uptime'}, inplace=True)
-except FileNotFoundError:
-    # Try fallback path in case Vercel bundled differently
-    fallback_path = BASE_DIR / "data" / "q-vercel-latency.json"
+def load_data():
+    """Lazy-load the JSON file when handler is invoked."""
+    global df, GLOBAL_ERROR
+    if df is not None:
+        return  # already loaded
+
     try:
-        df = pd.read_json(fallback_path)
-        df.columns = df.columns.str.lower()
-        df.rename(columns={'latency_ms': 'latency', 'uptime_pct': 'uptime'}, inplace=True)
-    except Exception as e:
-        df = pd.DataFrame()
-        GLOBAL_ERROR = f"Data file not found or could not be parsed: {str(e)}"
-except Exception as e:
-    df = pd.DataFrame()
-    GLOBAL_ERROR = f"Data parsing error: {str(e)}"
+        import pandas as pd
+    except ImportError:
+        GLOBAL_ERROR = "Pandas not installed. Add 'pandas' to requirements.txt"
+        df = None
+        return
+
+    BASE_DIR = Path(__file__).parent
+    primary_path = BASE_DIR.parent / "data" / "q-vercel-latency.json"
+    fallback_path = BASE_DIR / "data" / "q-vercel-latency.json"
+
+    for path in [primary_path, fallback_path]:
+        try:
+            df_local = pd.read_json(path)
+            df_local.columns = df_local.columns.str.lower()
+            df_local.rename(columns={'latency_ms': 'latency', 'uptime_pct': 'uptime'}, inplace=True)
+            df = df_local
+            return
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            GLOBAL_ERROR = f"Error parsing JSON file at {path}: {str(e)}"
+            df = None
+            return
+
+    GLOBAL_ERROR = "Data file not found in both primary and fallback locations."
+    df = None
 
 
 def get_metrics(df, region, threshold):
@@ -49,7 +60,7 @@ def get_metrics(df, region, threshold):
 
 
 def handler(request):
-    """Vercel serverless function with guaranteed CORS and JSON response"""
+    """Vercel serverless function entry point with full CORS and safe JSON handling"""
     cors_headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -64,22 +75,25 @@ def handler(request):
     if request.method != "POST":
         return json.dumps({"error": "Method Not Allowed"}), 405, cors_headers
 
-    if df.empty:
-        error_msg = GLOBAL_ERROR or "Data not loaded on server."
+    # Lazy-load data
+    load_data()
+
+    if df is None:
+        error_msg = GLOBAL_ERROR or "Data could not be loaded."
         return json.dumps({"error": f"Initialization Error: {error_msg}"}), 500, cors_headers
 
+    # Parse request body
     try:
-        # Parse request body
-        body_data = getattr(request, 'json', None)
-        if not body_data:
-            body_raw = getattr(request, 'body', None)
-            if body_raw:
-                if isinstance(body_raw, bytes):
-                    body_data = json.loads(body_raw.decode('utf-8'))
-                else:
-                    body_data = json.loads(body_raw)
+        if hasattr(request, 'json') and request.json is not None:
+            body_data = request.json
+        elif hasattr(request, 'body') and request.body:
+            raw = request.body
+            if isinstance(raw, bytes):
+                body_data = json.loads(raw.decode('utf-8'))
             else:
-                return json.dumps({"error": "Empty request body"}), 400, cors_headers
+                body_data = json.loads(raw)
+        else:
+            return json.dumps({"error": "Empty request body"}), 400, cors_headers
 
         regions = body_data.get("regions", [])
         threshold = body_data.get("threshold_ms", 180)
