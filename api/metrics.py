@@ -33,29 +33,39 @@ def get_metrics(df, region, threshold):
 
 def handler(request):
     """Vercel serverless function entry point with full CORS support"""
+    
+    # MODIFIED: Added Content-Type header explicitly for robustness
     cors_headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
+        "Content-Type": "application/json" 
     }
 
     # Handle preflight OPTIONS request
     if request.method == "OPTIONS":
-        return ("", 204, cors_headers)
+        # The body is empty for a 204 response
+        return "", 204, cors_headers
 
     if request.method != "POST":
-        return (json.dumps({"error": "Method Not Allowed"}), 405, cors_headers)
+        body = json.dumps({"error": "Method Not Allowed"})
+        return body, 405, cors_headers
 
     if df.empty:
-        return (json.dumps({"error": "Data could not be loaded on the server."}), 500, cors_headers)
+        body = json.dumps({"error": "Data could not be loaded on the server."})
+        return body, 500, cors_headers
 
     try:
-        body = request.json  # Vercel automatically parses JSON if Content-Type is application/json
-        regions = body.get("regions", [])
-        threshold = body.get("threshold_ms", 180)
+        # Vercel handles request.json for parsing the JSON body
+        body_data = request.json
+        regions = body_data.get("regions", [])
+        threshold = body_data.get("threshold_ms", 180)
 
         results = {region: get_metrics(df, region, threshold) for region in regions}
-
-        return (json.dumps(results), 200, cors_headers)
+        
+        # FINAL RESPONSE: Return (body, status_code, headers)
+        return json.dumps(results), 200, cors_headers
+        
     except Exception as e:
-        return (json.dumps({"error": str(e)}), 500, cors_headers)
+        body = json.dumps({"error": str(e)})
+        return body, 500, cors_headers
