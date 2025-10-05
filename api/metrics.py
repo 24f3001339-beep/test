@@ -135,6 +135,7 @@ async def get_latency_metrics(payload: InputPayload):
             p95_latency=round(p95_latency, 2),
             avg_uptime=round(avg_uptime, 2),
             breaches=breaches
+            
         ))
 
     return results
