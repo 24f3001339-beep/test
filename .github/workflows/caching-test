@@ -3,31 +3,30 @@ name: CI with Cache 📦
 on: [push, workflow_dispatch]
 
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 1. Caching Step
+      # 1. Cache dependencies step
+      # The 'id' is crucial for checking the cache-hit output later.
       - name: Cache Node Modules
         uses: actions/cache@v4
-        id: cache-dependencies  # ID is needed to check the hit/miss result
+        id: cache-action  # <-- Using 'cache-action' as the ID for clear reference
         with:
-          path: ~/.npm  # Directory to cache (e.g., node_modules or a global cache directory)
-          # The key must be 'cache-19de7dc'
+          path: ~/.npm  # Cache directory
+          # Required key
           key: cache-19de7dc
 
-      # This is a placeholder step for installing dependencies that would use the cache
       - name: Install dependencies (Simulated)
         run: |
-          echo "Installing dependencies..."
-          # In a real workflow, this would be 'npm install' or similar
+          echo "Simulating dependency installation..."
+          # This line ensures the directory exists so the cache saves something on the first run
           mkdir -p ~/.npm
 
-      # 2. Required step to echo the cache hit/miss result
+      # 2. Required step: Name must be 'prime-cache-19de7dc'
+      # It uses the 'id' from the caching step (cache-action) to get the result.
       - name: prime-cache-19de7dc
         run: |
-          echo "Cache status (Hit/Miss): ${{ steps.cache-dependencies.outputs.cache-hit }}"
+          echo "Cache status (Hit/Miss): ${{ steps.cache-action.outputs.cache-hit }}"
